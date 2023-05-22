@@ -1,0 +1,66 @@
+pool:
+    vmImage: 'ubuntu-latest'
+
+trigger:
+  paths:
+    exclude:
+    - azure-pipeline.yaml
+
+variables:
+  isMain: $[eq(variables['Build.SourceBranch'], 'refs/heads/master')]
+
+schedules:
+- cron: "0 */3 * * *"
+  branches:
+    include: 
+      - master
+  always: "true"
+
+jobs:
+  - job: renovate
+    displayName: Renovate
+    timeoutInMinutes:  120
+    strategy:
+      matrix: 
+        ProjectName:
+          repositoryPrefix: 'Prefix'
+    steps:
+      - task: Cache@2
+        displayName: Cache npm
+        inputs:
+          key: 'npm | "$(Agent.OS)" | package-lock.json'
+          path: ./node_modules
+          cacheHitVar: CACHE_RESTORED
+
+      - task: Npm@1
+        displayName: Npm install
+        condition: ne(variables.CACHE_RESTORED, 'true')
+        inputs:
+          command: 'install'
+
+      - task: Bash@3
+        continueOnError: true
+        displayName: Run renovate - $(repositoryPrefix) Prefix
+        inputs:
+          targetType: 'inline'
+          script: |
+            set -x
+            #export LOG_LEVEL=debug
+            export RENOVATE_CONFIG_FILE="./renovate-config.js"
+            export GITHUB_COM_TOKEN=$(GITHUB_COM_TOKEN)
+            export AZURE_DEVOPS_ARTIFACT=$(System.AccessToken)
+            export RENOVATE_TOKEN=$(System.AccessToken)
+            export RENOVATE_ENDPOINT="$(System.CollectionUri)"
+            export RENOVATE_REVIEWERS_FROM_CODE_OWNERS=true
+            export RENOVATE_AUTODISCOVER=true
+
+            export RENOVATE_AUTODISCOVER_FILTER="/$(System.TeamProject)\/($(repositoryPrefix)).*/"
+
+            if [ "$(isMain)" == "True" ]
+            then
+              echo "Branch MASTER"
+              node ./node_modules/renovate/dist/renovate 
+            else
+              echo "Branch autre que MASTER - dry-run"
+              node ./node_modules/renovate/dist/renovate --dry-run
+            fi
